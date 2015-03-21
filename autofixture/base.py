@@ -4,13 +4,12 @@ import warnings
 from django.db import models
 from django.db.models import fields, ImageField
 from django.db.models.fields import related
+from django.contrib.contenttypes.generic import GenericRelation
+from django.utils.datastructures import SortedDict
 from django.utils.six import with_metaclass
-
 import autofixture
 from autofixture import constraints, generators, signals
 from autofixture.values import Values
-from .compat import GenericRelation
-from .compat import OrderedDict
 
 
 
@@ -89,7 +88,8 @@ class AutoFixtureBase(object):
     class IGNORE_FIELD(object):
         pass
 
-    overwrite_defaults = False
+    overwrite_defaults = False  
+    return_default_values = False
     follow_fk = True
     generate_fk = False
     follow_m2m = {'ALL': (1,5)}
@@ -98,7 +98,7 @@ class AutoFixtureBase(object):
     none_p = 0.2
     tries = 1000
 
-    field_to_generator = OrderedDict((
+    field_to_generator = SortedDict((
         (fields.BooleanField, generators.BooleanGenerator),
         (fields.NullBooleanField, generators.NullBooleanGenerator),
         (fields.DateTimeField, generators.DateTimeGenerator),
@@ -232,17 +232,6 @@ class AutoFixtureBase(object):
         '''
         self.constraints.append(constraint)
 
-    def is_inheritance_parent(self, field):
-        '''
-        Checks if the field is the automatically created OneToOneField used by
-        django mulit-table inheritance
-        '''
-        return (
-            isinstance(field, related.OneToOneField) and
-            field.primary_key and
-            issubclass(field.model, field.rel.to)
-        )
-
     def get_generator(self, field):
         '''
         Return a value generator based on the field instance that is passed to
@@ -252,7 +241,7 @@ class AutoFixtureBase(object):
         '''
         if isinstance(field, fields.AutoField):
             return None
-        if self.is_inheritance_parent(field):
+        if isinstance(field, related.OneToOneField) and field.primary_key:
             return None
         if (
             field.default is not fields.NOT_PROVIDED and
@@ -260,7 +249,7 @@ class AutoFixtureBase(object):
             field.name not in self.field_values):
                 return None
         kwargs = {}
-
+        
         if field.name in self.field_values:
             value = self.field_values[field.name]
             if isinstance(value, generators.Generator):
@@ -383,6 +372,14 @@ class AutoFixtureBase(object):
         '''
         if field not in self._field_generators:
             self._field_generators[field] = self.get_generator(field)
+        if ( self.return_default_values and
+            field.default is not fields.NOT_PROVIDED and
+            not self.overwrite_defaults and
+            field.name not in self.field_values):
+                if hasattr(field.default, '__call__'):
+                    return field.default()
+                else:
+                    return field.default
         generator = self._field_generators[field]
         if generator is None:
             return self.IGNORE_FIELD
